@@ -13,9 +13,9 @@ use axum::{
     routing::get,
     Router,
 };
-use chrono::Utc;
+use chrono::{TimeZone, Utc};
 use futures_util::StreamExt as SExt;
-use handlebars::RenderError;
+use handlebars::{handlebars_helper, RenderError};
 use serde::Serialize;
 use snafu::{ResultExt, Snafu};
 use tokio::{fs::DirEntry, net::TcpListener};
@@ -44,6 +44,29 @@ pub enum TemplateLoadError {
     },
 }
 
+handlebars_helper!(from_mtimestamp_helper: |t: i64| {
+    match chrono::DateTime::from_timestamp(t, 0) {
+        Some(dt) => Utc
+            .timestamp_opt(dt.timestamp(), 0)
+            .single()
+            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+            .unwrap_or_else(|| "Invalid timestamp".to_string()),
+        None => "Invalid timestamp".to_string(),
+    }
+});
+
+handlebars_helper!(humanize_size_helper: |s: u64| {
+    if s >= 1 << 30 {
+        format!("{:.2} GiB", s as f64 / (1 << 30) as f64)
+    } else if s >= 1 << 20 {
+        format!("{:.2} MiB", s as f64 / (1 << 20) as f64)
+    } else if s >= 1 << 10 {
+        format!("{:.2} KiB", s as f64 / (1 << 10) as f64)
+    } else {
+        format!("{} B", s)
+    }
+});
+
 impl Template {
     pub fn from_config(
         path_to_config: &Path,
@@ -67,6 +90,8 @@ impl Template {
         registry
             .register_template_string("error", error)
             .context(RegisterSnafu { component: "error" })?;
+        registry.register_helper("from_mtimestamp", Box::new(from_mtimestamp_helper));
+        registry.register_helper("humanize_size", Box::new(humanize_size_helper));
         Ok(Self { registry })
     }
 
@@ -115,7 +140,7 @@ struct DirEntryInfo {
     is_dir: bool,
     size: u64,
     href: String,
-    datetime: Option<chrono::DateTime<Utc>>,
+    datetime: i64,
 }
 
 pub async fn direntry_info(val: Result<DirEntry, io::Error>) -> Option<(DirEntry, fs::Metadata)> {
@@ -158,7 +183,7 @@ pub async fn directory_listing(
                         slash = if meta.is_dir() { "/" } else { "" }
                     ),
                     name: name.into_owned(),
-                    datetime: chrono::DateTime::from_timestamp(meta.mtime(), 0),
+                    datetime: meta.mtime(),
                 })
             }
             None => None,

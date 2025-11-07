@@ -16,9 +16,9 @@
         </tr>
         {{#each entry}}
         <tr>
-            <td><a href="{{this.href}}">{{this.name}}</a></td>
-            <td>{{this.datetime}}</td>
-            <td>{{this.size}}</td>
+            <td><a href="{{this.href}}">{{this.name}}{{#if this.is_dir}}/{{/if}}</a></td>
+            <td>{{from_mtimestamp this.datetime}}</td>
+            <td title="{{this.size}} bytes">{{humanize_size this.size}}</td>
         </tr>
         {{/each}}
     </table>
