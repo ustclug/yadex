@@ -17,7 +17,10 @@ fn init_logging() {
         .with_line_number(true)
         .with_target(false)
         .with_ansi(true)
-        .with_filter(EnvFilter::from_env("YADEX_LOGLEVEL"));
+        .with_filter(EnvFilter::new(format!(
+            "info,{}",
+            std::env::var("YADEX_LOGLEVEL").unwrap_or_default()
+        )));
     tracing_subscriber::registry()
         .with(console_subscriber)
         .init();
