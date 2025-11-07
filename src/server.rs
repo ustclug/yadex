@@ -109,6 +109,13 @@ impl App {
         listener: TcpListener,
         template: Template,
     ) -> Result<(), YadexError> {
+        let root: &'static Path = Box::leak(Box::<Path>::from(config.root));
+        if config.chroot {
+            chroot(root).whatever_context("failed to chroot")?;
+            set_current_dir("/").whatever_context("failed to cd into new root")?;
+        } else {
+            set_current_dir(root).whatever_context("failed to cd into given path")?;
+        }
         let router = Router::new()
             .fallback(get(directory_listing))
             .with_state(AppState {
@@ -119,9 +126,6 @@ impl App {
                 },
                 template: Arc::new(template),
             });
-        let root: &'static Path = Box::leak(Box::<Path>::from(config.root));
-        chroot(root).whatever_context("failed to chroot")?;
-        set_current_dir("/").whatever_context("failed to cd into new root")?;
         axum::serve(listener, router)
             .await
             .with_whatever_context(|_| "serve failed")
@@ -155,6 +159,37 @@ struct IndexData<'a> {
     maybe_truncated: bool,
 }
 
+fn to_relative(base: &Path, path: &str) -> PathBuf {
+    let mut safe_path = PathBuf::from(base);
+    let p = Path::new(path);
+
+    for comp in p.components() {
+        use std::path::Component;
+        match comp {
+            Component::RootDir => {}   // No absolute paths
+            Component::ParentDir => {} // No going up
+            Component::CurDir => {}    // Ignore redundant current dir
+            Component::Prefix(_) => unreachable!("yadex does not support Windows"),
+            Component::Normal(comp) => safe_path.push(comp),
+        }
+    }
+
+    safe_path
+}
+
+fn path_to_href(path: &Path) -> String {
+    let mut segments = Vec::new();
+    for comp in path.components() {
+        if comp == std::path::Component::CurDir {
+            continue;
+        }
+        let seg = comp.as_os_str().to_string_lossy();
+        let escaped = urlencoding::encode(&seg).to_string();
+        segments.push(escaped);
+    }
+    format!("/{}", segments.join("/"))
+}
+
 #[axum::debug_handler]
 pub async fn directory_listing(
     State(state): State<AppState>,
@@ -162,27 +197,36 @@ pub async fn directory_listing(
 ) -> Result<Response, YadexError> {
     let path = uri.path();
 
+    // decode
+    let path = urlencoding::decode(path)
+        .map_err(|_| YadexError::NotFound {
+            source: std::io::ErrorKind::NotADirectory.into(),
+        })?
+        .into_owned();
+
     if !path.ends_with('/') {
         return Ok(Redirect::permanent(&format!("{path}/")).into_response());
     }
+
+    let path = to_relative(Path::new("."), &path);
+    let path = path.as_path();
+    tracing::info!("listing directory: {:?}", path);
 
     let entries = ReadDirStream::new(tokio::fs::read_dir(path).await.context(NotFoundSnafu)?)
         .take(state.limit)
         .filter_map(async |entry| match direntry_info(entry).await {
             Some((d, meta)) => {
                 let name = d.file_name();
-                let name = name.to_string_lossy();
+                let displayed_name = name.to_string_lossy();
                 Some(DirEntryInfo {
                     is_dir: meta.is_dir(),
                     size: meta.size(),
                     href: format!(
-                        "{path}{file}{slash}",
-                        file = html_escape::encode_double_quoted_attribute(&urlencoding::encode(
-                            &name
-                        )),
+                        "{href}{slash}",
+                        href = path_to_href(&path.join(d.file_name())),
                         slash = if meta.is_dir() { "/" } else { "" }
                     ),
-                    name: name.into_owned(),
+                    name: displayed_name.into_owned(),
                     datetime: meta.mtime(),
                 })
             }

@@ -9,3 +9,7 @@ error_file = "error.html"
 [service]
 limit = 50
 root = "."
+# Note: When chroot is false, yadex WILL NOT check if the requested path will finally be resolved inside the root directory.
+# An example is a symlink that points outside the root directory.
+# Use docker, systemd, bwrap, or other sandboxing tools to enforce filesystem isolation if you don't want chroot(2).
+chroot = false

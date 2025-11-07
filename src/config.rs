@@ -25,4 +25,5 @@ pub struct TemplateConfig {
 pub struct ServiceConfig {
     pub limit: u64,
     pub root: PathBuf,
+    pub chroot: bool,
 }
