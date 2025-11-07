@@ -157,6 +157,7 @@ pub async fn direntry_info(val: Result<DirEntry, io::Error>) -> Option<(DirEntry
 struct IndexData<'a> {
     entry: &'a [DirEntryInfo],
     maybe_truncated: bool,
+    cwd: &'a str,
 }
 
 fn to_relative(base: &Path, path: &str) -> PathBuf {
@@ -188,6 +189,17 @@ fn path_to_href(path: &Path) -> String {
         segments.push(escaped);
     }
     format!("/{}", segments.join("/"))
+}
+
+fn remove_first_component<P: AsRef<Path>>(path: P) -> PathBuf {
+    let mut comps = path.as_ref().components();
+    comps.next();
+    let rest = comps.as_path();
+    if rest.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        rest.to_path_buf()
+    }
 }
 
 #[axum::debug_handler]
@@ -241,6 +253,7 @@ pub async fn directory_listing(
             &IndexData {
                 entry: &entries,
                 maybe_truncated: entries.len() == state.limit,
+                cwd: remove_first_component(path).display().to_string().as_str(),
             },
         )
         .context(RenderSnafu { template: "index" })?;
