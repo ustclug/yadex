@@ -7,7 +7,7 @@ index_file = "index.html"
 
 [service]
 limit = 50
-root = "."
+root = "/srv/repo/"
 # Supports following values: "none", "chroot", "landlock"
 # "chroot" requires root privileges to run the server.
 # "landlock" requires newer kernel but don't need root privileges.
