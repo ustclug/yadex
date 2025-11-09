@@ -216,7 +216,7 @@ pub async fn directory_listing(
     let path = path.as_path();
     tracing::debug!("listing directory: {:?}", path);
 
-    let entries = ReadDirStream::new(tokio::fs::read_dir(path).await.context(NotFoundSnafu)?)
+    let mut entries = ReadDirStream::new(tokio::fs::read_dir(path).await.context(NotFoundSnafu)?)
         .take(state.limit)
         .filter_map(async |entry| match direntry_info(entry).await {
             Some((d, meta)) => {
@@ -238,6 +238,13 @@ pub async fn directory_listing(
         })
         .collect::<Vec<_>>()
         .await;
+    entries.sort_by(|a, b| {
+        match (a.is_dir, b.is_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        }
+    });
     let html = state
         .template
         .render(
