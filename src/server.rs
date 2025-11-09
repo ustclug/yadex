@@ -118,6 +118,8 @@ impl App {
                 },
                 template: Arc::new(template),
             });
+        sd_notify::notify(true, &[sd_notify::NotifyState::Ready])
+            .whatever_context("failed to do systemd notify")?;
         axum::serve(listener, router)
             .await
             .with_whatever_context(|_| "serve failed")
@@ -241,12 +243,10 @@ pub async fn directory_listing(
         })
         .collect::<Vec<_>>()
         .await;
-    entries.sort_by(|a, b| {
-        match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        }
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
     let html = state
         .template
