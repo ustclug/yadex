@@ -52,6 +52,12 @@ jobs:
         sudo chown -R runner .
         # # show version info
         # RUST_LOG=debug target/x86_64-unknown-linux-musl/release/yadex --version
+    
+    - name: Debian package bundling
+      run: |
+        cargo install cargo-deb
+        cp -a target/x86_64-unknown-linux-musl/release/yadex target/release/yadex
+        cargo deb --no-build
 
     - name: Deploy - Create and Upload Release
       if: startsWith(github.ref, 'refs/tags/')
@@ -59,6 +65,7 @@ jobs:
       with:
         artifacts: |
           target/x86_64-unknown-linux-musl/release/yadex
+          target/debian/yadex_*.deb
     - name: Deploy - Put it in artifact (if not a tag)
       if: false == startsWith(github.ref, 'refs/tags/')
       uses: actions/upload-artifact@v4
@@ -66,6 +73,7 @@ jobs:
         name: yadex
         path: |
           target/x86_64-unknown-linux-musl/release/yadex
+          target/debian/yadex_*.deb
     # - name: Release to crates.io
     #   if: startsWith(github.ref, 'refs/tags/')
     #   uses: katyo/publish-crates@v2
