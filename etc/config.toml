@@ -14,3 +14,8 @@ root = "/srv/repo/"
 # When set to "none", yadex can not make sure that users can not access files outside the root directory.
 # For example, a symlink pointing outside the root directory can be accessed.
 security = "landlock"
+# Whether to use template.index_file to render users the index.
+# Accessed directly at /path/to/directory/
+template_index = true
+# Provide JSON API at /api/files endpoint.
+json_api = true

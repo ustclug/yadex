@@ -49,10 +49,14 @@ fn main() -> color_eyre::Result<()> {
 }
 
 async fn run(cmdline: Cmdline, config: Config) -> color_eyre::Result<()> {
-    let template = Template::from_config(&cmdline.config, config.template)?;
+    let template = match config.service.template_index {
+        true => Template::from_config(&cmdline.config, config.template)?,
+        false => Template::default(),
+    };
     let listener =
         tokio::net::TcpListener::bind((config.network.address, config.network.port)).await?;
     tracing::info!("Yadex listening on {}", listener.local_addr()?);
+
     App::serve(config.service, listener, template).await?;
     Ok(())
 }

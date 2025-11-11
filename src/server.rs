@@ -8,7 +8,7 @@ use std::{
 
 use axum::{
     Router,
-    extract::State,
+    extract::{Json, State},
     http::Uri,
     response::{Html, IntoResponse, Redirect, Response},
     routing::get,
@@ -16,7 +16,7 @@ use axum::{
 use chrono::{TimeZone, Utc};
 use futures_util::StreamExt as SExt;
 use handlebars::{RenderError, handlebars_helper};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use snafu::{ResultExt, Snafu};
 use tokio::{fs::DirEntry, net::TcpListener};
 use tokio_stream::wrappers::ReadDirStream;
@@ -26,6 +26,7 @@ use crate::config::{ServiceConfig, TemplateConfig};
 
 pub struct App {}
 
+#[derive(Default)]
 pub struct Template {
     registry: handlebars::Handlebars<'static>,
 }
@@ -108,16 +109,21 @@ impl App {
         } else {
             set_current_dir(root).whatever_context("failed to cd into given path")?;
         }
-        let router = Router::new()
-            .fallback(get(directory_listing))
-            .with_state(AppState {
-                limit: if config.limit == 0 {
-                    usize::MAX
-                } else {
-                    config.limit as usize
-                },
-                template: Arc::new(template),
-            });
+        let mut router = Router::new();
+        if config.template_index {
+            router = router.fallback(get(directory_listing));
+        }
+        if config.json_api {
+            router = router.route("/api/files", get(api_directory_listing));
+        }
+        let router = router.with_state(AppState {
+            limit: if config.limit == 0 {
+                usize::MAX
+            } else {
+                config.limit as usize
+            },
+            template: Arc::new(template),
+        });
         sd_notify::notify(true, &[sd_notify::NotifyState::Ready])
             .whatever_context("failed to do systemd notify")?;
         axum::serve(listener, router)
@@ -196,30 +202,9 @@ fn remove_first_component<P: AsRef<Path>>(path: P) -> PathBuf {
     }
 }
 
-#[axum::debug_handler]
-pub async fn directory_listing(
-    State(state): State<AppState>,
-    uri: Uri,
-) -> Result<Response, YadexError> {
-    let path = uri.path();
-
-    // decode
-    let path = urlencoding::decode(path)
-        .map_err(|_| YadexError::NotFound {
-            source: std::io::ErrorKind::NotADirectory.into(),
-        })?
-        .into_owned();
-
-    if !path.ends_with('/') {
-        return Ok(Redirect::permanent(&format!("{path}/")).into_response());
-    }
-
-    let path = to_relative(Path::new("."), &path);
-    let path = path.as_path();
-    tracing::debug!("listing directory: {:?}", path);
-
+async fn get_entries(path: &Path, limit: usize) -> Result<Vec<DirEntryInfo>, YadexError> {
     let mut entries = ReadDirStream::new(tokio::fs::read_dir(path).await.context(NotFoundSnafu)?)
-        .take(state.limit)
+        .take(limit)
         .filter_map(async |entry| match direntry_info(entry).await {
             Some((d, meta)) => {
                 let name = d.file_name();
@@ -248,6 +233,65 @@ pub async fn directory_listing(
         (false, true) => std::cmp::Ordering::Greater,
         _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
+    Ok(entries)
+}
+
+#[derive(Deserialize)]
+pub struct APIInput {
+    path: String,
+}
+
+#[derive(Serialize)]
+pub struct APIOutput {
+    entries: Vec<DirEntryInfo>,
+    maybe_truncated: bool,
+}
+
+#[axum::debug_handler]
+pub async fn api_directory_listing(
+    State(state): State<AppState>,
+    Json(payload): Json<APIInput>,
+) -> Result<Json<APIOutput>, YadexError> {
+    let mut path = payload.path;
+    if !path.ends_with('/') {
+        path.push('/');
+    }
+    let path = to_relative(Path::new("."), &path);
+    let path = path.as_path();
+    tracing::debug!("API listing directory: {:?}", path);
+
+    let entries = get_entries(path, state.limit).await?;
+    let maybe_truncated = entries.len() == state.limit;
+    let output = APIOutput {
+        entries,
+        maybe_truncated,
+    };
+    Ok(Json(output))
+}
+
+#[axum::debug_handler]
+pub async fn directory_listing(
+    State(state): State<AppState>,
+    uri: Uri,
+) -> Result<Response, YadexError> {
+    let path = uri.path();
+
+    // decode
+    let path = urlencoding::decode(path)
+        .map_err(|_| YadexError::NotFound {
+            source: std::io::ErrorKind::NotADirectory.into(),
+        })?
+        .into_owned();
+
+    if !path.ends_with('/') {
+        return Ok(Redirect::permanent(&format!("{path}/")).into_response());
+    }
+
+    let path = to_relative(Path::new("."), &path);
+    let path = path.as_path();
+    tracing::debug!("listing directory: {:?}", path);
+
+    let entries = get_entries(path, state.limit).await?;
     let html = state
         .template
         .render(
