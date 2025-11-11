@@ -11,7 +11,7 @@ use axum::{
     extract::{Json, State},
     http::Uri,
     response::{Html, IntoResponse, Redirect, Response},
-    routing::get,
+    routing::{get, post},
 };
 use chrono::{TimeZone, Utc};
 use futures_util::StreamExt as SExt;
@@ -114,7 +114,7 @@ impl App {
             router = router.fallback(get(directory_listing));
         }
         if config.json_api {
-            router = router.route("/api/files", get(api_directory_listing));
+            router = router.route("/api/files", post(api_directory_listing));
         }
         let router = router.with_state(AppState {
             limit: if config.limit == 0 {
@@ -202,7 +202,11 @@ fn remove_first_component<P: AsRef<Path>>(path: P) -> PathBuf {
     }
 }
 
-async fn get_entries(path: &Path, limit: usize) -> Result<Vec<DirEntryInfo>, YadexError> {
+async fn get_entries(
+    path: &Path,
+    limit: usize,
+    sort: bool,
+) -> Result<Vec<DirEntryInfo>, YadexError> {
     let mut entries = ReadDirStream::new(tokio::fs::read_dir(path).await.context(NotFoundSnafu)?)
         .take(limit)
         .filter_map(async |entry| match direntry_info(entry).await {
@@ -228,11 +232,13 @@ async fn get_entries(path: &Path, limit: usize) -> Result<Vec<DirEntryInfo>, Yad
         })
         .collect::<Vec<_>>()
         .await;
-    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
-        (true, false) => std::cmp::Ordering::Less,
-        (false, true) => std::cmp::Ordering::Greater,
-        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-    });
+    if sort {
+        entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        });
+    }
     Ok(entries)
 }
 
@@ -260,7 +266,7 @@ pub async fn api_directory_listing(
     let path = path.as_path();
     tracing::debug!("API listing directory: {:?}", path);
 
-    let entries = get_entries(path, state.limit).await?;
+    let entries = get_entries(path, state.limit, false).await?;
     let maybe_truncated = entries.len() == state.limit;
     let output = APIOutput {
         entries,
@@ -291,7 +297,7 @@ pub async fn directory_listing(
     let path = path.as_path();
     tracing::debug!("listing directory: {:?}", path);
 
-    let entries = get_entries(path, state.limit).await?;
+    let entries = get_entries(path, state.limit, true).await?;
     let html = state
         .template
         .render(
