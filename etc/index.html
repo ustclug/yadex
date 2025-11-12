@@ -47,6 +47,11 @@
         font-weight: 600;
       }
 
+      th:hover {
+        background-color: #e9ecef;
+        cursor: pointer;
+      }
+
       tr:nth-child(even) {
         background-color: #f9f9f9;
       }
@@ -74,6 +79,14 @@
         width: 15%;
         color: #666;
       }
+
+      th.sorted-asc::after {
+        content: " ▲";
+      }
+
+      th.sorted-desc::after {
+        content: " ▼";
+      }
     </style>
   </head>
 
@@ -84,32 +97,87 @@
     <div class="warning">⚠️ Too many items. This list might be truncated.</div>
     {{/if}}
 
-    <table>
+    <table id="file-table">
       <thead>
         <tr>
-          <th>Name</th>
-          <th>Modified</th>
-          <th>Size</th>
+          <th data-type="text">Name</th>
+          <th data-type="date">Modified</th>
+          <th data-type="size">Size</th>
         </tr>
       </thead>
       <tbody>
         {{#if (ne cwd ".")}}
-        <tr>
+        <tr id="parent-dir">
           <td><a href="..">..</a></td>
           <td></td>
           <td></td>
         </tr>
-        {{/if}}
-        {{#each entry}}
+        {{/if}} {{#each entry}}
         <tr>
           <td>
             <a href="{{this.href}}">{{this.name}}{{#if this.is_dir}}/{{/if}}</a>
           </td>
           <td>{{from_mtimestamp this.datetime}}</td>
-          <td title="{{this.size}} bytes">{{#unless this.is_dir}}{{humanize_size this.size}}{{/unless}}</td>
+          <td title="{{this.size}} bytes">
+            {{#unless this.is_dir}}{{humanize_size this.size}}{{/unless}}
+          </td>
         </tr>
         {{/each}}
       </tbody>
     </table>
+
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        const table = document.getElementById("file-table");
+        const headers = table.querySelectorAll("th");
+        const tbody = table.querySelector("tbody");
+
+        headers.forEach((header, index) => {
+          header.addEventListener("click", () => {
+            const type = header.dataset.type;
+            const rows = Array.from(
+              tbody.querySelectorAll("tr:not(#parent-dir)")
+            );
+            const isAscending = !header.classList.contains("sorted-asc");
+
+            headers.forEach((h) =>
+              h.classList.remove("sorted-asc", "sorted-desc")
+            );
+
+            rows.sort((a, b) => {
+              const cellA = a.children[index].innerText.trim();
+              const cellB = b.children[index].innerText.trim();
+
+              let valA = cellA;
+              let valB = cellB;
+
+              if (type === "size") {
+                valA = parseFloat(a.children[index].title) || 0;
+                valB = parseFloat(b.children[index].title) || 0;
+              } else if (type === "date") {
+                valA = new Date(cellA).getTime() || 0;
+                valB = new Date(cellB).getTime() || 0;
+              } else {
+                valA = cellA.toLowerCase();
+                valB = cellB.toLowerCase();
+                if (valA.endsWith("/") && !valB.endsWith("/")) return isAscending ? -1 : 1;
+                if (!valA.endsWith("/") && valB.endsWith("/")) return isAscending ? 1 : -1;
+              }
+
+              if (valA < valB) return isAscending ? -1 : 1;
+              if (valA > valB) return isAscending ? 1 : -1;
+              return 0;
+            });
+
+            header.classList.add(isAscending ? "sorted-asc" : "sorted-desc");
+
+            const parentRow = tbody.querySelector("#parent-dir");
+            tbody.innerHTML = "";
+            if (parentRow) tbody.appendChild(parentRow);
+            rows.forEach((row) => tbody.appendChild(row));
+          });
+        });
+      });
+    </script>
   </body>
 </html>
