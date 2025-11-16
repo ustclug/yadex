@@ -149,7 +149,8 @@ struct DirEntryInfo {
 
 pub async fn direntry_info(val: Result<DirEntry, io::Error>) -> Option<(DirEntry, fs::Metadata)> {
     let val = val.ok()?;
-    let meta = val.metadata().await.ok()?;
+    // We need to get the actual metadata (not symlink metadata) here
+    let meta = tokio::fs::metadata(val.path()).await.ok()?;
     Some((val, meta))
 }
 
