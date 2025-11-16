@@ -51,6 +51,7 @@ assets = [
     ["etc/config.toml", "etc/yadex/", "644"],
     ["etc/index.html", "etc/yadex/", "644"],
     # I can't help user to configure nginx -- provide an example in docs
-    ["contrib/nginx.example.conf", "usr/share/doc/yadex/", "644"],
+    ["contrib/nginx.index.example.conf", "usr/share/doc/yadex/", "644"],
+    ["contrib/nginx.try_files.example.conf", "usr/share/doc/yadex/", "644"],
 ]
 systemd-units = { enable = false }
