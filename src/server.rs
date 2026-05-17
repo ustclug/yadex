@@ -45,6 +45,7 @@ pub enum TemplateLoadError {
     },
 }
 
+// Note: This gives UTC time to frontend. It's expected that frontend shall convert to users' timezone, if necessary.
 handlebars_helper!(from_mtimestamp_helper: |t: i64| {
     match chrono::DateTime::from_timestamp(t, 0) {
         Some(dt) => Utc
