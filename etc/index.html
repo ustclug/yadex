@@ -15,6 +15,7 @@
       h1 {
         font-size: 1.5rem;
         margin-bottom: 1rem;
+        text-align: center;
       }
 
       .warning {
@@ -56,6 +57,10 @@
         background-color: #f9f9f9;
       }
 
+      tr:hover {
+        background-color: #e9ecef;
+      }
+
       a {
         color: #007acc;
         text-decoration: none;
@@ -86,6 +91,16 @@
 
       th.sorted-desc::after {
         content: " ▼";
+      }
+
+      .footer {
+        text-align: center;
+        opacity: 0.5;
+        transition: opacity ease-in-out 0.5s;
+      }
+
+      .footer:hover {
+        opacity: 1;
       }
 
       @media (prefers-color-scheme: dark) {
@@ -121,6 +136,10 @@
 
         tr:nth-child(even) {
           background-color: #262626;
+        }
+
+        tr:hover {
+          background-color: #333333;
         }
 
         a {
@@ -177,6 +196,8 @@
         {{/each}}
       </tbody>
     </table>
+
+    <p class="footer">Powered by <a href="https://github.com/ustclug/yadex">yadex</a></p>
 
     <script>
       document.addEventListener("DOMContentLoaded", () => {
