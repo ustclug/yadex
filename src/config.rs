@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 pub enum Security {
     #[serde(rename = "none")]
     None,
+    #[serde(rename = "path")]
+    Path,
     #[serde(rename = "chroot")]
     Chroot,
     #[serde(rename = "landlock")]

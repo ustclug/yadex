@@ -103,6 +103,14 @@ impl App {
         listener: TcpListener,
         template: Template,
     ) -> Result<(), YadexError> {
+        let confined_root = if config.security == crate::config::Security::Path {
+            Some(Arc::new(
+                crate::confined::Root::new(&config.root)
+                    .whatever_context("failed to initialize openat2 confinement")?,
+            ))
+        } else {
+            None
+        };
         let root: &'static Path = Box::leak(Box::<Path>::from(config.root));
         if config.security == crate::config::Security::Chroot {
             chroot(root).whatever_context("failed to chroot")?;
@@ -118,6 +126,7 @@ impl App {
             router = router.route("/api/files", post(api_directory_listing));
         }
         let router = router.with_state(AppState {
+            confined_root,
             limit: if config.limit == 0 {
                 usize::MAX
             } else {
@@ -135,6 +144,7 @@ impl App {
 
 #[derive(Clone)]
 pub struct AppState {
+    confined_root: Option<Arc<crate::confined::Root>>,
     limit: usize,
     template: Arc<Template>,
 }
@@ -208,32 +218,46 @@ async fn get_entries(
     path: &Path,
     limit: usize,
     sort: bool,
+    confined_root: Option<&Arc<crate::confined::Root>>,
 ) -> Result<Vec<DirEntryInfo>, YadexError> {
-    let mut entries = ReadDirStream::new(tokio::fs::read_dir(path).await.context(NotFoundSnafu)?)
-        .take(limit)
-        .filter_map(async |entry| match direntry_info(entry).await {
-            Some((d, meta)) => {
-                let name = d.file_name();
-                let displayed_name = name.to_string_lossy();
-                if displayed_name.starts_with('.') {
-                    return None;
-                }
-                Some(DirEntryInfo {
-                    is_dir: meta.is_dir(),
-                    size: if meta.is_dir() { 0 } else { meta.size() },
-                    href: format!(
-                        "{href}{slash}",
-                        href = path_to_href(&path.join(d.file_name())),
-                        slash = if meta.is_dir() { "/" } else { "" }
-                    ),
-                    name: displayed_name.into_owned(),
-                    datetime: meta.mtime(),
-                })
+    let raw_entries = if let Some(root) = confined_root {
+        let root = Arc::clone(root);
+        let path = path.to_owned();
+        tokio::task::spawn_blocking(move || root.entries(&path, limit))
+            .await
+            .whatever_context("directory listing task failed")?
+            .context(NotFoundSnafu)?
+    } else {
+        ReadDirStream::new(tokio::fs::read_dir(path).await.context(NotFoundSnafu)?)
+            .take(limit)
+            .filter_map(async |entry| {
+                direntry_info(entry)
+                    .await
+                    .map(|(d, meta)| (d.file_name(), meta))
+            })
+            .collect::<Vec<_>>()
+            .await
+    };
+    let mut entries = raw_entries
+        .into_iter()
+        .filter_map(|(name, meta)| {
+            let displayed_name = name.to_string_lossy();
+            if displayed_name.starts_with('.') {
+                return None;
             }
-            None => None,
+            Some(DirEntryInfo {
+                is_dir: meta.is_dir(),
+                size: if meta.is_dir() { 0 } else { meta.size() },
+                href: format!(
+                    "{href}{slash}",
+                    href = path_to_href(&path.join(&name)),
+                    slash = if meta.is_dir() { "/" } else { "" }
+                ),
+                name: displayed_name.into_owned(),
+                datetime: meta.mtime(),
+            })
         })
-        .collect::<Vec<_>>()
-        .await;
+        .collect::<Vec<_>>();
     if sort {
         entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
             (true, false) => std::cmp::Ordering::Less,
@@ -268,7 +292,7 @@ pub async fn api_directory_listing(
     let path = path.as_path();
     tracing::debug!("API listing directory: {:?}", path);
 
-    let entries = get_entries(path, state.limit, false).await?;
+    let entries = get_entries(path, state.limit, false, state.confined_root.as_ref()).await?;
     let maybe_truncated = entries.len() == state.limit;
     let output = APIOutput {
         entries,
@@ -299,7 +323,7 @@ pub async fn directory_listing(
     let path = path.as_path();
     tracing::debug!("listing directory: {:?}", path);
 
-    let entries = get_entries(path, state.limit, true).await?;
+    let entries = get_entries(path, state.limit, true, state.confined_root.as_ref()).await?;
     let html = state
         .template
         .render(

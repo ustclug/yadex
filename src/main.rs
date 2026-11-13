@@ -9,6 +9,7 @@ use crate::landlock::setup_landlock;
 
 mod cmdline;
 mod config;
+mod confined;
 mod landlock;
 mod server;
 

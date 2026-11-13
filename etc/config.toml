@@ -8,9 +8,11 @@ index_file = "index.html"
 [service]
 limit = 50
 root = "/srv/repo/"
-# Supports following values: "none", "chroot", "landlock"
+# Supports following values: "none", "chroot", "landlock", "path"
 # "chroot" requires root privileges to run the server.
 # "landlock" requires newer kernel but don't need root privileges.
+# "path" requires Linux 5.6+ to use the openat2 syscall; startup fails if unavailable.
+# Relative symlinks within root work; absolute symlinks and symlinks escaping root are rejected.
 # When set to "none", yadex can not make sure that users can not access files outside the root directory.
 # For example, a symlink pointing outside the root directory can be accessed.
 security = "landlock"
