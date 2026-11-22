@@ -9,8 +9,8 @@ use std::{
 use axum::{
     Router,
     extract::{Json, State},
-    http::Uri,
-    response::{Html, IntoResponse, Redirect, Response},
+    http::{HeaderValue, StatusCode, Uri, header},
+    response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
 use chrono::{TimeZone, Utc};
@@ -220,6 +220,33 @@ fn path_to_href(path: &Path) -> String {
     format!("/{}", segments.join("/"))
 }
 
+/// The "add the trailing slash" redirect for `path` (as returned by `to_relative`).
+///
+/// The target is never built from the raw or the percent-decoded request path: it is
+/// derived from the sanitised path and percent-encoded again by `path_to_href`. It
+/// therefore always starts with exactly one `/` (never a scheme-relative `//host`,
+/// `/\host` or `/<TAB>/host`), only consists of URL-safe ASCII (always a valid header
+/// value, nothing is decoded twice by the next hop) and keeps the query string.
+fn redirect_to_directory(path: &Path, query: Option<&str>) -> Response {
+    let mut location = path_to_href(path);
+    if !location.ends_with('/') {
+        location.push('/');
+    }
+    if let Some(query) = query {
+        location.push('?');
+        location.push_str(query);
+    }
+    match HeaderValue::try_from(location) {
+        Ok(location) => (
+            StatusCode::PERMANENT_REDIRECT,
+            [(header::LOCATION, location)],
+        )
+            .into_response(),
+        // Cannot happen (see above) - but request data must never be able to cause a panic.
+        Err(_) => invalid_path().into_response(),
+    }
+}
+
 fn remove_first_component<P: AsRef<Path>>(path: P) -> PathBuf {
     let mut comps = path.as_ref().components();
     comps.next();
@@ -332,12 +359,13 @@ pub async fn directory_listing(
         })?
         .into_owned();
 
-    if !path.ends_with('/') {
-        return Ok(Redirect::permanent(&format!("{path}/")).into_response());
-    }
-
+    let ends_with_slash = path.ends_with('/');
     let path = to_relative(Path::new("."), &path).ok_or_else(invalid_path)?;
     let path = path.as_path();
+
+    if !ends_with_slash {
+        return Ok(redirect_to_directory(path, uri.query()));
+    }
     tracing::debug!("listing directory: {:?}", path);
 
     let entries = get_entries(path, state.limit, true, state.confined_root.as_ref()).await?;
