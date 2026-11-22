@@ -415,3 +415,77 @@ impl IntoResponse for YadexError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn to_relative_refuses_dot_dot_instead_of_dropping_it() {
+        for p in [
+            "/private/../",
+            "/../",
+            "/a/b/../../",
+            "/a/..",
+            "..",
+            "/a/../b/",
+        ] {
+            assert_eq!(to_relative(Path::new("."), p), None, "{p}");
+        }
+        assert_eq!(to_relative(Path::new("."), "/a\0b/"), None);
+    }
+
+    #[test]
+    fn to_relative_normalises_harmless_paths() {
+        let rel = |p| to_relative(Path::new("."), p);
+        assert_eq!(rel("/"), Some(PathBuf::from(".")));
+        assert_eq!(rel("//pub//sub/./"), Some(PathBuf::from("./pub/sub")));
+        assert_eq!(rel("/pub/..."), Some(PathBuf::from("./pub/...")));
+    }
+
+    fn location(path: &str, query: Option<&str>) -> String {
+        let rel = to_relative(Path::new("."), path).unwrap();
+        let response = redirect_to_directory(&rel, query);
+        assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT);
+        response.headers()[header::LOCATION]
+            .to_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    #[test]
+    fn redirect_target_is_always_a_same_origin_path() {
+        assert_eq!(location("/pub", None), "/pub/");
+        assert_eq!(location("/a b", Some("x=1")), "/a%20b/?x=1");
+        // scheme-relative for a browser if copied verbatim into Location
+        assert_eq!(location("//evil.example", None), "/evil.example/");
+        assert_eq!(location("/\\evil.example", None), "/%5Cevil.example/");
+        assert_eq!(location("/\t/evil.example", None), "/%09/evil.example/");
+        // used to panic in Redirect::permanent ("URI isn't a valid header value")
+        assert_eq!(location("/x\ny", None), "/x%0Ay/");
+        assert_eq!(
+            location("/x\r\nSet-Cookie: a=b", None),
+            "/x%0D%0ASet-Cookie%3A%20a%3Db/"
+        );
+    }
+
+    #[test]
+    fn errors_have_real_status_codes() {
+        let status = |source: io::Error| YadexError::NotFound { source }.into_response().status();
+        assert_eq!(
+            status(io::ErrorKind::NotFound.into()),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status(io::ErrorKind::PermissionDenied.into()),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            invalid_path().into_response().status(),
+            StatusCode::NOT_FOUND
+        );
+        // "too many open files" is not "this directory does not exist"
+        let emfile = io::Error::from_raw_os_error(rustix::io::Errno::MFILE.raw_os_error());
+        assert_eq!(status(emfile), StatusCode::SERVICE_UNAVAILABLE);
+    }
+}
