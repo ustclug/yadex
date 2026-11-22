@@ -20,4 +20,4 @@ security = "landlock"
 # Accessed directly at /path/to/directory/
 template_index = true
 # Provide JSON API at /api/files endpoint.
-json_api = true
+json_api = false
