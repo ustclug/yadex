@@ -172,22 +172,39 @@ struct IndexData<'a> {
     cwd: &'a str,
 }
 
-fn to_relative(base: &Path, path: &str) -> PathBuf {
+/// Maps a (percent-decoded) request path to a path below `base`.
+///
+/// Returns `None` if the path contains a `..` segment or a NUL byte. A `..` segment
+/// must never be silently dropped: a front-end web server (nginx) *resolves* it before
+/// it matches locations and applies its access rules, so "ignoring" it here would make
+/// yadex list a different directory than the one the front end has authorised
+/// (`/private/../` is `/` for nginx, but would be `private/` for yadex).
+fn to_relative(base: &Path, path: &str) -> Option<PathBuf> {
+    if path.contains('\0') {
+        return None;
+    }
     let mut safe_path = PathBuf::from(base);
     let p = Path::new(path);
 
     for comp in p.components() {
         use std::path::Component;
         match comp {
-            Component::RootDir => {}   // No absolute paths
-            Component::ParentDir => {} // No going up
-            Component::CurDir => {}    // Ignore redundant current dir
+            Component::RootDir => {}             // No absolute paths
+            Component::ParentDir => return None, // No going up, and no guessing either
+            Component::CurDir => {}              // Ignore redundant current dir
             Component::Prefix(_) => unreachable!("yadex does not support Windows"),
             Component::Normal(comp) => safe_path.push(comp),
         }
     }
 
-    safe_path
+    Some(safe_path)
+}
+
+/// The error returned for request paths that `to_relative` refuses.
+fn invalid_path() -> YadexError {
+    YadexError::NotFound {
+        source: std::io::ErrorKind::InvalidInput.into(),
+    }
 }
 
 fn path_to_href(path: &Path) -> String {
@@ -288,7 +305,7 @@ pub async fn api_directory_listing(
     if !path.ends_with('/') {
         path.push('/');
     }
-    let path = to_relative(Path::new("."), &path);
+    let path = to_relative(Path::new("."), &path).ok_or_else(invalid_path)?;
     let path = path.as_path();
     tracing::debug!("API listing directory: {:?}", path);
 
@@ -319,7 +336,7 @@ pub async fn directory_listing(
         return Ok(Redirect::permanent(&format!("{path}/")).into_response());
     }
 
-    let path = to_relative(Path::new("."), &path);
+    let path = to_relative(Path::new("."), &path).ok_or_else(invalid_path)?;
     let path = path.as_path();
     tracing::debug!("listing directory: {:?}", path);
 
