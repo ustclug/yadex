@@ -400,17 +400,42 @@ pub enum YadexError {
     },
 }
 
+/// Whether a failed directory lookup means "there is no such (listable) directory",
+/// as opposed to an operational problem on the server side.
+fn is_not_found(err: &io::Error) -> bool {
+    use rustix::io::Errno;
+    match err.kind() {
+        io::ErrorKind::NotFound
+        | io::ErrorKind::NotADirectory
+        | io::ErrorKind::PermissionDenied
+        | io::ErrorKind::InvalidInput => true,
+        // A path that leaves the root (openat2 with RESOLVE_BENEATH), a symlink
+        // loop, an over-long name.
+        _ => [Errno::XDEV, Errno::LOOP, Errno::NAMETOOLONG]
+            .iter()
+            .any(|errno| err.raw_os_error() == Some(errno.raw_os_error())),
+    }
+}
+
 impl IntoResponse for YadexError {
     fn into_response(self) -> Response {
         match &self {
-            YadexError::NotFound { .. } => "404 Not Found".into_response(),
+            YadexError::NotFound { source } if is_not_found(source) => {
+                (StatusCode::NOT_FOUND, "404 Not Found").into_response()
+            }
+            YadexError::NotFound { source } => {
+                // EMFILE, ENFILE, ENOMEM, EIO, EAGAIN, ...: the directory may well exist.
+                // Do not tell clients and caches that it does not.
+                error!("failed to list directory: {source}");
+                (StatusCode::SERVICE_UNAVAILABLE, "503 Service Unavailable").into_response()
+            }
             YadexError::Whatever { source, message } => {
                 error!("internal error: {message}, source: {source:?}");
-                "Internal Server Error".into_response()
+                (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
             }
             YadexError::Render { source, .. } => {
                 error!("internal error: {self}, source: {source:?}");
-                "Internal Server Error".into_response()
+                (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
             }
         }
     }
